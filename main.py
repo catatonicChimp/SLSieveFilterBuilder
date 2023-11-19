@@ -1,9 +1,13 @@
 import configparser
 import json
-import readline
 import os
 import requests
+import sys
 
+if sys.platform == 'win32':
+    print("Autocomplete is not supported on Windows Native CommandPrompt (Try WSL instead)")
+else:
+    import readline
 
 class Alias:
     def __init__(self, email, folder=None, labels=None):
@@ -128,8 +132,9 @@ def get_user_folder_assignments(aliases, folders, labels, filename, config):
     # Set up autocomplete for folders and labels
     global current_completions
     # commands = folders + labels
-    readline.set_completer(completer)
-    readline.parse_and_bind("tab: complete")
+    if sys.platform != 'win32':
+        readline.set_completer(completer)
+        readline.parse_and_bind("tab: complete")
 
 
     # Merge with new aliases
@@ -159,7 +164,11 @@ def get_user_folder_assignments(aliases, folders, labels, filename, config):
                 continue
                
         current_completions = folders
-        folder_input = input(f"Enter folder name for {alias} (Tab to autocomplete, leave blank if none and type 'exit' to leave): ")
+        if sys.platform != 'win32':
+            folder_input = input(f"Enter folder name for {alias} (Tab to autocomplete, leave blank if none and type 'exit' to leave): ")
+        else:
+            folder_input = input(f"Enter folder name for {alias} (leave blank if none and type 'exit' to leave): ")
+
         if folder_input:
             if folder_input == "exit":
                 break
@@ -170,7 +179,10 @@ def get_user_folder_assignments(aliases, folders, labels, filename, config):
 
         current_completions = labels
         while True:
-            label_input = input(f"Enter label for {alias} (Tab to autocomplete, type 'done' to finish): ")
+            if sys.platform != 'win32':
+                label_input = input(f"Enter label for {alias} (Tab to autocomplete, type 'done' to finish): ")
+            else:
+                label_input = input(f"Enter label for {alias} (type 'done' to finish): ")
             if label_input.lower() == 'done':
                 break
             if label_input:
