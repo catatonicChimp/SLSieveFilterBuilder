@@ -3,6 +3,7 @@ import json
 import os
 import requests
 import sys
+import imaplib 
 
 if sys.platform == 'win32':
     print("Autocomplete is not supported on Windows Native CommandPrompt (Try WSL instead)")
@@ -91,6 +92,74 @@ def completer(text, state):
     else:
         return None
 
+def get_imap_folders(host, port, username, password):
+    try:
+        # Connect to the IMAP server
+        imap = imaplib.IMAP4(host, port)
+
+        # Start TLS for security
+        imap.starttls()
+
+        # Login to the server
+        imap.login(username, password)
+
+        # Get the list of folders
+        status, folders_raw = imap.list()
+
+        # Close the connection
+        imap.logout()
+
+        # Extract folder names if the operation was successful
+        folder_names = []
+        if status == 'OK':
+            for folder in folders_raw:
+                folder_names.append(folder.decode().split(' "/" ')[1])
+
+        folders = []
+        labels = []
+        for folder in folder_names:
+            folder = folder.strip('\"')
+            length = len(folder.split("/"))
+            if folder.split("/")[0] == "Folders":
+                if length > 1:
+                    if length > 2:
+                        folders.append(".".join(folder.split("/")[1:]))
+                    else:
+                        folders.append(folder.split("/")[1])
+            elif folder.split("/")[0] == "Labels":
+                if length > 1:
+                    labels.append(folder.split("/")[1])
+
+        return folders, labels
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return [],[]
+    
+    
+def create_folder(host, port, username, password, folder_name):
+    try:
+        # Connect to the IMAP server
+        imap = imaplib.IMAP4(host, port)
+
+        # Start TLS for security
+        imap.starttls()
+
+        # Login to the server
+        imap.login(username, password)
+        
+        # Create a new folder
+        status, response = imap.create(folder_name)
+        if status == 'OK':
+            print(f"Folder '{folder_name}' created successfully.")
+        else:
+            print(f"Failed to create folder: {response}")
+        # Logout
+        imap.logout()
+    except imaplib.IMAP4.error as e:
+        print(f"IMAP error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")    
+    
 
 def setup_config():
     config = configparser.ConfigParser()
@@ -99,7 +168,7 @@ def setup_config():
 
     if not os.path.exists(config_file):
         config['simplelogin'] = {'api_key': ''}
-        config['mail'] = {'folders': json.dumps([]), 'labels': json.dumps([])}
+        config['mail'] = {'folders': json.dumps([]), 'labels': json.dumps([]), 'host': '', 'port': '', 'username': '', 'password': ''}
         config_changed = True
     else:
         config.read(config_file)
@@ -107,7 +176,7 @@ def setup_config():
             config['simplelogin'] = {'api_key': ''}
             config_changed = True
         if 'mail' not in config:
-            config['mail'] = {'folders': json.dumps([]), 'labels': json.dumps([])}
+            config['mail'] = {'folders': json.dumps([]), 'labels': json.dumps([]), 'host': '', 'port': '', 'username': '', 'password': ''}
             config_changed = True
 
     # Check and update API key if needed
@@ -116,6 +185,27 @@ def setup_config():
         config['simplelogin']['api_key'] = api_key
         config_changed = True
 
+    if not config['mail']['host']:
+        host = input("Enter IMAP HOST IP Address: ").strip()
+        config['mail']['host'] = host
+        config_changed = True
+
+    if not config['mail']['port']:
+        port = input("Enter Port: ").strip()
+        config['mail']['port'] = port
+        config_changed = True
+        
+    if not config['mail']['username']:
+        username = input("Enter Username: ").strip()
+        config['mail']['username'] = username
+        config_changed = True
+
+    if not config['mail']['password']:
+        password = input("Enter Password: ").strip()
+        config['mail']['password'] = password
+        config_changed = True
+
+
     if config_changed:
         with open(config_file, 'w') as file:
             config.write(file)
@@ -123,11 +213,11 @@ def setup_config():
 
     return config
 
-def get_user_folder_assignments(aliases, folders, labels, filename, config):
+def get_user_folder_assignments(aliases, folders, new_folders, labels, new_labels, filename, config):
     # Load existing assignments
     existing_aliases = load_aliases_from_json(filename)
-    new_folders = []  # List to keep track of newly added folders
-    new_labels = []   # List to keep track of newly added labels    
+    # new_folders = []  # List to keep track of newly added folders
+    # new_labels = []   # List to keep track of newly added labels    
 
     # Set up autocomplete for folders and labels
     global current_completions
@@ -138,14 +228,15 @@ def get_user_folder_assignments(aliases, folders, labels, filename, config):
 
 
     # Merge with new aliases
-    for alias in aliases:
-        if alias not in existing_aliases:
-            existing_aliases[alias] = Alias(alias)
+    if aliases:
+        for alias in aliases:
+            if alias not in existing_aliases:
+                existing_aliases[alias] = Alias(alias)
 
 
     # User input for folder assignments
     # for alias, alias_obj in existing_aliases.items():
-    for alias in aliases:
+    for alias in existing_aliases:
         alias_obj = existing_aliases.get(alias, Alias(alias))
         print(f"Assigning folder and labels for alias: {alias}")
 
@@ -235,8 +326,8 @@ def save_sieve_script_to_file(sieve_script, filename="sieve_script.sieve"):
 
 def main():
     config = setup_config()
-    new_folders = None
-    new_labels = None
+    new_folders = []
+    new_labels = []
     aliases = None
     filename = "aliases.json"
 
@@ -252,9 +343,19 @@ def main():
         if not os.path.exists(filename) and aliases == None:
             print("No Aliases can be loaded from file, and no Aliases were loaded from SimpleLogin")
             quit()
-        folders = json.loads(config.get('mail', "folders", fallback="[]"))
-        labels = json.loads(config.get('mail', 'labels', fallback="[]"))
-        assignments, new_folders, new_labels = get_user_folder_assignments(aliases, folders, labels, filename, config)
+        folders, labels = get_imap_folders(config.get("mail","host"),config.get("mail","port"),config.get("mail","username"),config.get("mail","password"))
+
+        foldersLocal = json.loads(config.get('mail', "folders", fallback="[]"))
+        labelsLocal = json.loads(config.get('mail', 'labels', fallback="[]"))
+        for f in foldersLocal:
+            if f not in folders:
+                folders.append(f)
+                new_folders.append(f)
+        for l in labelsLocal:
+            if l not in labels:
+                labels.append(l)
+                new_labels.append(l)
+        assignments, new_folders, new_labels = get_user_folder_assignments(aliases, folders, new_folders, labels, new_labels, filename, config)
     else:
         if not os.path.exists(filename):
             
@@ -268,11 +369,20 @@ def main():
 
     # Print the new folders and labels created during this session
     if new_folders:
+        for nFolder in new_folders:
+            if "." in nFolder:
+                nFolder.replace(".","/")
+            fnFolder = f"Folders/{nFolder}"
+            create_folder(config.get("mail","host"),config.get("mail","port"),config.get("mail","username"),config.get("mail","password"), fnFolder)
         print("\nNew folders created:")
         print("\n".join(new_folders))
     if new_labels:
+        for nLabel in new_labels:
+            fnLabel = f"Labels/{nLabel}"
+            create_folder(config.get("mail","host"),config.get("mail","port"),config.get("mail","username"),config.get("mail","password"), fnLabel)
         print("\nNew labels created:")
         print("\n".join(new_labels))
+
 
     
 
